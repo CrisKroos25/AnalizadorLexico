@@ -157,13 +157,13 @@ main:
     pop   eax
     cmp   eax, ebx
     mov   eax, 0
-    jg   cmp_t_131329493069184
-    jmp   cmp_e_131329493069184
-cmp_t_131329493069184:
+    jg   cmp_t_2964589028496
+    jmp   cmp_e_2964589028496
+cmp_t_2964589028496:
     mov   eax, 1
-cmp_e_131329493069184:
+cmp_e_2964589028496:
     cmp  eax, 0
-    je   else_131329493068896
+    je   else_2964589352272
     ; println string 'x es mayor que 5'
     mov  eax, 4         ; sys_write
     mov  ebx, 1         ; stdout
@@ -176,8 +176,8 @@ cmp_e_131329493069184:
     mov  ecx, newline
     mov  edx, 1
     int  0x80
-    jmp  fin_if_131329493068896
-else_131329493068896:
+    jmp  fin_if_2964589352272
+else_2964589352272:
     ; println string 'x es menor o igual a 5'
     mov  eax, 4         ; sys_write
     mov  ebx, 1         ; stdout
@@ -190,7 +190,7 @@ else_131329493068896:
     mov  ecx, newline
     mov  edx, 1
     int  0x80
-fin_if_131329493068896:
+fin_if_2964589352272:
     mov  eax, 0
     mov  [i], eax
     ; println string 'Conteo while:'
@@ -205,7 +205,7 @@ fin_if_131329493068896:
     mov  ecx, newline
     mov  edx, 1
     int  0x80
-ini_while_131329493069856:
+ini_while_2964589352944:
     mov  eax, [i]
     push  eax
     mov  eax, 3
@@ -213,13 +213,13 @@ ini_while_131329493069856:
     pop   eax
     cmp   eax, ebx
     mov   eax, 0
-    jl   cmp_t_131329493069376
-    jmp   cmp_e_131329493069376
-cmp_t_131329493069376:
+    jl   cmp_t_2964589029456
+    jmp   cmp_e_2964589029456
+cmp_t_2964589029456:
     mov   eax, 1
-cmp_e_131329493069376:
+cmp_e_2964589029456:
     cmp  eax, 0
-    je   fin_while_131329493069856
+    je   fin_while_2964589352944
     mov  eax, [i]
     ; println entero (con newline)
     call __println_int
@@ -230,8 +230,8 @@ cmp_e_131329493069376:
     pop   eax
     add   eax, ebx
     mov  [i], eax
-    jmp  ini_while_131329493069856
-fin_while_131329493069856:
+    jmp  ini_while_2964589352944
+fin_while_2964589352944:
     ; println string 'Conteo for:'
     mov  eax, 4         ; sys_write
     mov  ebx, 1         ; stdout
@@ -246,7 +246,7 @@ fin_while_131329493069856:
     int  0x80
     mov  eax, 0
     mov  [k], eax
-ini_for_131329493070864:
+ini_for_2964589353280:
     mov  eax, [k]
     push  eax
     mov  eax, 4
@@ -254,13 +254,13 @@ ini_for_131329493070864:
     pop   eax
     cmp   eax, ebx
     mov   eax, 0
-    jl   cmp_t_131329493070768
-    jmp   cmp_e_131329493070768
-cmp_t_131329493070768:
+    jl   cmp_t_2964589402736
+    jmp   cmp_e_2964589402736
+cmp_t_2964589402736:
     mov   eax, 1
-cmp_e_131329493070768:
+cmp_e_2964589402736:
     cmp  eax, 0
-    je   fin_for_131329493070864
+    je   fin_for_2964589353280
     mov  eax, [k]
     ; println entero (con newline)
     call __println_int
@@ -271,8 +271,8 @@ cmp_e_131329493070768:
     pop   eax
     add   eax, ebx
     mov  [k], eax
-    jmp  ini_for_131329493070864
-fin_for_131329493070864:
+    jmp  ini_for_2964589353280
+fin_for_2964589353280:
     ; println string 'Fin del programa'
     mov  eax, 4         ; sys_write
     mov  ebx, 1         ; stdout
