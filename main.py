@@ -1,4 +1,6 @@
 import json
+import os
+import subprocess
 import lexico
 import sintactico_ast
 
@@ -10,30 +12,32 @@ int suma(int a, int b) {
 };
 
 int main() {
+    println("Inicio del programa");
+
     int resultado = suma(3, 4);
+    print("Resultado de suma(3,4): ");
     println(resultado);
 
     int x = 10;
     if (x > 5) {
-        println(x);
+        println("x es mayor que 5");
     } else {
-        print(x);
+        println("x es menor o igual a 5");
     };
 
     int i = 0;
+    println("Conteo while:");
     while (i < 3) {
         println(i);
         i = i + 1;
     };
 
-    int j = 0;
+    println("Conteo for:");
     for (int k = 0; k < 4; k = k + 1) {
         println(k);
     };
 
-    print(resultado);
-    println(resultado);
-
+    println("Fin del programa");
     return 0;
 };
 """
@@ -58,9 +62,9 @@ try:
     print("\n=== ANÁLISIS SINTÁCTICO ===")
     parser = sintactico_ast.Parser(tokens)
     arbol_ast = parser.parsear()
-    print("Análisis sintáctico completo sin errores.")
+    print("Análisis sintáctico completado sin errores.")
 except SyntaxError as e:
-    print(e)
+    print(f"Error: {e}")
     arbol_ast = None
 
 
@@ -69,7 +73,6 @@ except SyntaxError as e:
 # ==========================
 
 def imprimir_ast(nodo):
-
     if isinstance(nodo, lexico.NodoPrograma):
         return {
             'programa': 'Noname',
@@ -83,83 +86,92 @@ def imprimir_ast(nodo):
             "cuerpo": [imprimir_ast(c) for c in nodo.cuerpo]
         }
     elif isinstance(nodo, lexico.NodoParametro):
-        return {
-            "id": nodo.nombre[1],
-            "tipo": nodo.tipo[1]
-        }
+        return {"id": nodo.nombre[1], "tipo": nodo.tipo[1]}
     elif isinstance(nodo, lexico.NodoAsignacion):
-        return {
-            "tipo": 'asignacion',
-            "variable": nodo.nombre[1],
-            "expresion": imprimir_ast(nodo.expresion)
-        }
+        return {"tipo": "asignacion", "variable": nodo.nombre[1], "expresion": imprimir_ast(nodo.expresion)}
     elif isinstance(nodo, lexico.NodoReasignacion):
-        return {
-            "tipo": 'reasignacion',
-            "variable": nodo.nombre[1],
-            "expresion": imprimir_ast(nodo.expresion)
-        }
+        return {"tipo": "reasignacion", "variable": nodo.nombre[1], "expresion": imprimir_ast(nodo.expresion)}
     elif isinstance(nodo, lexico.NodoOperacion):
-        return {
-            "op": nodo.operador[1],
-            "izq": imprimir_ast(nodo.izquierda),
-            "der": imprimir_ast(nodo.derecha)
-        }
+        return {"op": nodo.operador[1], "izq": imprimir_ast(nodo.izquierda), "der": imprimir_ast(nodo.derecha)}
     elif isinstance(nodo, lexico.NodoRetorno):
-        return {
-            "tipo": "return",
-            "valor": imprimir_ast(nodo.expresion)
-        }
+        return {"tipo": "return", "valor": imprimir_ast(nodo.expresion)}
     elif isinstance(nodo, lexico.NodoIdentificador):
         return nodo.nombre[1]
     elif isinstance(nodo, lexico.NodoNumero):
         return {"Numero": nodo.valor}
     elif isinstance(nodo, lexico.NodoString):
-        return {"String": nodo.valor[1]}
+        return {"String": nodo.valor[1] if isinstance(nodo.valor, tuple) else nodo.valor}
     elif isinstance(nodo, lexico.NodoLlamadaFuncion):
-        return {
-            "LlamadaFuncion": nodo.nombre_funcion,
-            "Argumentos": [imprimir_ast(a) for a in nodo.argumentos]
-        }
+        return {"LlamadaFuncion": nodo.nombre_funcion, "Argumentos": [imprimir_ast(a) for a in nodo.argumentos]}
     elif isinstance(nodo, lexico.NodoPrint):
-        return {
-            "tipo": "print",
-            "expresion": imprimir_ast(nodo.expresion)
-        }
+        return {"tipo": "print", "expresion": imprimir_ast(nodo.expresion)}
     elif isinstance(nodo, lexico.NodoPrintln):
-        return {
-            "tipo": "println",
-            "expresion": imprimir_ast(nodo.expresion)
-        }
+        return {"tipo": "println", "expresion": imprimir_ast(nodo.expresion)}
     elif isinstance(nodo, lexico.NodoIf):
-        nodo_json = {
-            "tipo": "if",
-            "condicion": imprimir_ast(nodo.condicion),
-            "cuerpo_if": [imprimir_ast(c) for c in nodo.cuerpo_if]
-        }
+        n = {"tipo": "if", "condicion": imprimir_ast(nodo.condicion), "cuerpo_if": [imprimir_ast(c) for c in nodo.cuerpo_if]}
         if nodo.cuerpo_else:
-            nodo_json["cuerpo_else"] = [imprimir_ast(c) for c in nodo.cuerpo_else]
-        return nodo_json
+            n["cuerpo_else"] = [imprimir_ast(c) for c in nodo.cuerpo_else]
+        return n
     elif isinstance(nodo, lexico.NodoWhile):
-        return {
-            "tipo": "while",
-            "condicion": imprimir_ast(nodo.condicion),
-            "cuerpo": [imprimir_ast(c) for c in nodo.cuerpo]
-        }
+        return {"tipo": "while", "condicion": imprimir_ast(nodo.condicion), "cuerpo": [imprimir_ast(c) for c in nodo.cuerpo]}
     elif isinstance(nodo, lexico.NodoFor):
-        return {
-            "tipo": "for",
-            "inicio": imprimir_ast(nodo.inicio),
-            "condicion": imprimir_ast(nodo.condicion),
-            "incremento": imprimir_ast(nodo.incremento),
-            "cuerpo": [imprimir_ast(c) for c in nodo.cuerpo]
-        }
-    else:
-        return {}
+        return {"tipo": "for", "inicio": imprimir_ast(nodo.inicio), "condicion": imprimir_ast(nodo.condicion),
+                "incremento": imprimir_ast(nodo.incremento), "cuerpo": [imprimir_ast(c) for c in nodo.cuerpo]}
+    return {}
 
 
 # ==========================
-# MOSTRAR AST EN FORMATO JSON
+# COMPILAR CON NASM + LD
+# ==========================
+
+def compilar(codigo_asm, nombre_base="programa"):
+    """
+    Recibe el codigo ensamblador como string y lo compila con nasm + ld.
+
+    Pasos:
+      1. Guardar el codigo en  <nombre_base>.asm
+      2. nasm -f elf32 <nombre_base>.asm -o <nombre_base>.o
+      3. ld -m elf_i386 <nombre_base>.o  -o <nombre_base>
+
+    Retorna True si la compilacion fue exitosa, False en caso contrario.
+    Imprime cada paso con su resultado.
+    """
+    archivo_asm = f"{nombre_base}.asm"
+    archivo_obj = f"{nombre_base}.o"
+    archivo_bin = nombre_base
+
+    # --- Paso 1: Escribir el archivo .asm ---
+    print(f"\n[Paso 1] Guardando codigo ensamblador en '{archivo_asm}'...")
+    with open(archivo_asm, "w") as f:
+        f.write(codigo_asm)
+    print(f"         Archivo guardado ({len(codigo_asm)} bytes).")
+
+    # --- Paso 2: Ensamblar con nasm ---
+    print(f"\n[Paso 2] Ensamblando con nasm...")
+    cmd_nasm = ["nasm", "-f", "elf32", archivo_asm, "-o", archivo_obj]
+    print(f"         Comando: {' '.join(cmd_nasm)}")
+    resultado_nasm = subprocess.run(cmd_nasm, capture_output=True, text=True)
+    if resultado_nasm.returncode != 0:
+        print(f"         ERROR en nasm:\n{resultado_nasm.stderr}")
+        return False
+    print(f"         Ensamblado exitoso -> '{archivo_obj}'")
+
+    # --- Paso 3: Enlazar con ld ---
+    print(f"\n[Paso 3] Enlazando con ld...")
+    cmd_ld = ["ld", "-m", "elf_i386", archivo_obj, "-o", archivo_bin]
+    print(f"         Comando: {' '.join(cmd_ld)}")
+    resultado_ld = subprocess.run(cmd_ld, capture_output=True, text=True)
+    if resultado_ld.returncode != 0:
+        print(f"         ERROR en ld:\n{resultado_ld.stderr}")
+        return False
+    print(f"         Enlazado exitoso  -> '{archivo_bin}'")
+
+    print(f"\n Compilacion completa. Ejecutar con: ./{archivo_bin}")
+    return True
+
+
+# ==========================
+# MOSTRAR AST Y TRADUCCIONES
 # ==========================
 
 if arbol_ast:
@@ -171,3 +183,22 @@ if arbol_ast:
 
     print("\n=== TRADUCCIÓN A RUBY ===")
     print(arbol_ast.traducirRuby())
+
+    print("\n=== CÓDIGO ENSAMBLADOR (NASM x86 32-bit) ===")
+    asm = arbol_ast.generarCodigo()
+    print(asm)
+
+    # Guardar el .asm generado para inspección
+    with open("salida.asm", "w") as f:
+        f.write(asm)
+    print("\n[Info] Codigo ensamblador guardado en 'salida.asm'")
+
+    # Intentar compilar (requiere nasm instalado)
+    print("\n=== COMPILACIÓN CON NASM + LD ===")
+    exito = compilar(asm, nombre_base="programa")
+    if not exito:
+        print("\n[Info] nasm no esta instalado en este entorno.")
+        print("       Para compilar el programa ejecuta:")
+        print("         nasm -f elf32 programa.asm -o programa.o")
+        print("         ld -m elf_i386 programa.o -o programa")
+        print("         ./programa")

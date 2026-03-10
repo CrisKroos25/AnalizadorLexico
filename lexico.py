@@ -13,21 +13,16 @@ token_patron = {
 }
 
 def identificar_tokens(texto):
-    # Unimos todos los patrones en un único patrón usando grupos nombrados
     patron_general = '|'.join(
         f'(?P<{token}>{patron})'
         for token, patron in token_patron.items()
     )
-
     patron_regex = re.compile(patron_general)
-
     tokens_encontrados = []
-
     for match in patron_regex.finditer(texto):
         for token, valor in match.groupdict().items():
-            if valor is not None and token != "WHITESPACE":  # Ignoramos espacios en blanco
+            if valor is not None and token != "WHITESPACE":
                 tokens_encontrados.append((token, valor))
-
     return tokens_encontrados
 
 
@@ -39,16 +34,149 @@ class NodoAST():
     # Clase base para todos los nodos del AST
 
     def traducirPy(self):
-        # Traduccion de C++ a Python
         raise NotImplementedError("Metodo traducirPy() no implementado en este Nodo.")
 
     def traducirRuby(self):
-        # Traduccion de C++ a Ruby
         raise NotImplementedError("Metodo traducirRuby() no implementado en este Nodo.")
 
-    def generarCodigo(self):
-        # Traduccion de C++ a ASSEMBLER
+    def generarCodigo(self, ctx=None):
         raise NotImplementedError("Metodo generarCodigo() no implementado en este Nodo.")
+
+
+# ==========================
+# CONTEXTO DE COMPILACION
+# ==========================
+# El contexto viaja por todo el árbol para recolectar:
+#   - cadenas literales (.data)
+#   - variables enteras    (.bss)
+# Así el NodoPrograma puede emitir las secciones correctas al final.
+
+class ContextoCodigo:
+    def __init__(self):
+        self.strings   = {}   # label -> valor_string  (para .data)
+        self.variables = []   # [(tipo, nombre)]        (para .bss)
+        self._str_cnt  = 0
+
+    def agregar_string(self, valor):
+        """Registra una cadena literal y devuelve su etiqueta .data."""
+        # Buscar si ya existe
+        for lbl, val in self.strings.items():
+            if val == valor:
+                return lbl
+        lbl = f"str_{self._str_cnt}"
+        self._str_cnt += 1
+        self.strings[lbl] = valor
+        return lbl
+
+    def agregar_variable(self, tipo, nombre):
+        if (tipo, nombre) not in self.variables:
+            self.variables.append((tipo, nombre))
+
+    def seccion_data(self):
+        """Genera la sección .data con todas las cadenas y el caracter newline."""
+        lineas = ["section .data"]
+        lineas.append("    newline  db  0x0A          ; salto de linea")
+        lineas.append("    digbuf   times 12 db 0     ; buffer conversion entero->string")
+        for lbl, valor in self.strings.items():
+            # valor tiene las comillas incluidas: "hola" -> hola
+            contenido = valor[1:-1]  # quitar comillas
+            escaped   = contenido.replace("\\n", "', 0x0A, '")
+            lineas.append(f"    {lbl}  db  '{escaped}', 0")
+            lineas.append(f"    {lbl}_len  equ  $ - {lbl} - 1")
+        return "\n".join(lineas)
+
+    def seccion_bss(self):
+        """Genera la sección .bss con todas las variables enteras."""
+        lineas = ["section .bss"]
+        for tipo, nombre in self.variables:
+            if tipo == 'int':
+                lineas.append(f"    {nombre}:  resd 1")
+        return "\n".join(lineas)
+
+
+# ==========================
+# RUTINAS AUXILIARES NASM
+# ==========================
+# Estas rutinas se insertan UNA SOLA VEZ en la sección .text.
+# - __int_to_str : convierte EAX (entero) a string en digbuf, devuelve ptr en ESI y len en ECX
+# - __print_int  : llama __int_to_str y hace sys_write sin newline
+# - __println_int: llama __int_to_str y hace sys_write + newline
+
+RUTINAS_AUX = """
+; -------------------------------------------------------
+; __int_to_str: convierte EAX a decimal ASCII en digbuf
+;   Entrada : EAX = entero a convertir
+;   Salida  : ESI = puntero al primer digito en digbuf
+;             ECX = longitud de la cadena
+; -------------------------------------------------------
+__int_to_str:
+    push ebx
+    push edx
+    push edi
+    mov  edi, digbuf        ; apuntar al buffer
+    add  edi, 11            ; empezar por el final
+    mov  byte [edi], 0      ; terminador nulo
+    mov  ebx, 10            ; divisor decimal
+    test eax, eax
+    jnz  .convertir
+    ; caso especial: eax == 0
+    dec  edi
+    mov  byte [edi], '0'
+    jmp  .fin
+.convertir:
+    test eax, eax
+    jz   .fin
+    xor  edx, edx
+    div  ebx                ; eax = cociente, edx = resto
+    add  dl, '0'
+    dec  edi
+    mov  [edi], dl
+    jmp  .convertir
+.fin:
+    mov  esi, edi           ; ESI = inicio del string
+    mov  ecx, digbuf
+    add  ecx, 11
+    sub  ecx, esi           ; ECX = longitud
+    pop  edi
+    pop  edx
+    pop  ebx
+    ret
+
+; -------------------------------------------------------
+; __print_int: imprime EAX como entero decimal (sin newline)
+;   Entrada : EAX = entero
+; -------------------------------------------------------
+__print_int:
+    call __int_to_str       ; ESI = ptr, ECX = len
+    mov  eax, 4             ; sys_write
+    mov  ebx, 1             ; stdout
+    ; ecx = ptr (usar esi)
+    push ecx
+    mov  ecx, esi
+    pop  edx                ; edx = longitud
+    int  0x80
+    ret
+
+; -------------------------------------------------------
+; __println_int: imprime EAX como entero decimal + newline
+;   Entrada : EAX = entero
+; -------------------------------------------------------
+__println_int:
+    call __int_to_str       ; ESI = ptr, ECX = len
+    mov  eax, 4
+    mov  ebx, 1
+    push ecx
+    mov  ecx, esi
+    pop  edx
+    int  0x80
+    ; imprimir newline
+    mov  eax, 4
+    mov  ebx, 1
+    mov  ecx, newline
+    mov  edx, 1
+    int  0x80
+    ret
+"""
 
 
 # ==========================
@@ -56,57 +184,78 @@ class NodoAST():
 # ==========================
 
 class NodoPrograma(NodoAST):
-    # Nodo que representa a un programa completo
     def __init__(self, funciones, main):
-        self.variables = []
         self.funciones = funciones
-        self.main = main
+        self.main      = main
 
-    def generarCodigo(self):
-        codigo = ["section .text", "global _start"]
-        data = ["section .bss"]
+    def generarCodigo(self, ctx=None):
+        ctx = ContextoCodigo()
 
-        # Recolectar variables de cada funcion
+        def recolectar_variables(instrucciones):
+            """Recorre recursivamente bloques anidados para registrar todas las variables."""
+            for inst in instrucciones:
+                if isinstance(inst, NodoAsignacion):
+                    ctx.agregar_variable(inst.tipo[1], inst.nombre[1])
+                elif isinstance(inst, NodoIf):
+                    recolectar_variables(inst.cuerpo_if)
+                    if inst.cuerpo_else:
+                        recolectar_variables(inst.cuerpo_else)
+                elif isinstance(inst, NodoWhile):
+                    recolectar_variables(inst.cuerpo)
+                elif isinstance(inst, NodoFor):
+                    # El inicio del for puede declarar una variable (ej: int k = 0)
+                    recolectar_variables([inst.inicio])
+                    recolectar_variables(inst.cuerpo)
+
+        # --- Recolectar variables de funciones (cuerpo + parametros) ---
         for funcion in self.funciones:
-            codigo.append(funcion.generarCodigo())
+            recolectar_variables(funcion.cuerpo)
+            for param in funcion.parametros:
+                ctx.agregar_variable(param.tipo[1], param.nombre[1])
 
-            for instruccion in funcion.cuerpo:
-                if isinstance(instruccion, NodoAsignacion):
-                    self.variables.append((instruccion.tipo[1], instruccion.nombre[1]))
+        # --- Recolectar variables del main (incluyendo bloques anidados) ---
+        recolectar_variables(self.main.cuerpo)
 
-            if len(funcion.parametros) > 0:
-                for parametro in funcion.parametros:
-                    self.variables.append((parametro.tipo[1], parametro.nombre[1]))
+        # --- Generar código de funciones y main ---
+        texto_funciones = []
+        for funcion in self.funciones:
+            texto_funciones.append(funcion.generarCodigo(ctx))
 
-        # Recolectar variables del main
-        for instruccion in self.main.cuerpo:
-            if isinstance(instruccion, NodoAsignacion):
-                self.variables.append((instruccion.tipo[1], instruccion.nombre[1]))
+        texto_main = self.main.generarCodigo(ctx)
 
-        codigo.append("_start:")
-        codigo.append(self.main.generarCodigo())
-        codigo.append("   mov eax, 1      ; syscall exit")
-        codigo.append("   xor ebx, ebx    ; Codigo de salida 0")
-        codigo.append("   int 0x80")
+        # --- Ensamblar secciones ---
+        seccion_data = ctx.seccion_data()
+        seccion_bss  = ctx.seccion_bss()
 
-        for variable in self.variables:
-            if variable[0] == 'int':
-                data.append(f'  {variable[1]}:  resd 1')
+        texto = []
+        texto.append(seccion_data)
+        texto.append("")
+        texto.append(seccion_bss)
+        texto.append("")
+        texto.append("section .text")
+        texto.append("global _start")
+        texto.append("")
+        texto.append(RUTINAS_AUX)
+        texto.append("")
+        for tf in texto_funciones:
+            texto.append(tf)
+            texto.append("")
+        texto.append("_start:")
+        texto.append(texto_main)
+        texto.append("    ; salida del programa")
+        texto.append("    mov  eax, 1")
+        texto.append("    xor  ebx, ebx")
+        texto.append("    int  0x80")
 
-        codigo = '\n'.join(codigo)
-        return '\n'.join(data) + '\n' + codigo
+        return "\n".join(texto)
 
     def traducirPy(self):
-        resultado = []
-        for funcion in self.funciones:
-            resultado.append(funcion.traducirPy())
+        resultado = [f.traducirPy() for f in self.funciones]
         resultado.append(self.main.traducirPy())
         return "\n\n".join(resultado)
 
     def traducirRuby(self):
-        resultado = []
-        for funcion in self.funciones:
-            resultado.append(funcion.traducirRuby())
+        resultado = [f.traducirRuby() for f in self.funciones]
         resultado.append(self.main.traducirRuby())
         return "\n\n".join(resultado)
 
@@ -116,46 +265,38 @@ class NodoPrograma(NodoAST):
 # ==========================
 
 class NodoFuncion(NodoAST):
-    # Nodo que representa la funcion
     def __init__(self, tipo, nombre, parametros, cuerpo):
-        self.tipo = tipo
-        self.nombre = nombre
+        self.tipo       = tipo
+        self.nombre     = nombre
         self.parametros = parametros
-        self.cuerpo = cuerpo
+        self.cuerpo     = cuerpo
 
-    def generarCodigo(self):
-        codigo = f'{self.nombre[1]}:\n'
-        if len(self.parametros) > 0:
-            for parametro in self.parametros:
-                codigo += '\n   pop   eax'
-                codigo += f'\n   mov [{parametro.nombre[1]}],   eax'
-        codigo += '\n'.join(c.generarCodigo() for c in self.cuerpo)
-        codigo += '\n    ret\n'
-        return codigo
+    def generarCodigo(self, ctx=None):
+        lineas = [f"{self.nombre[1]}:"]
+        # Recibir parametros desde la pila
+        for param in self.parametros:
+            lineas.append("    pop   eax")
+            lineas.append(f"    mov  [{param.nombre[1]}], eax")
+        for inst in self.cuerpo:
+            lineas.append(inst.generarCodigo(ctx))
+        lineas.append("    ret")
+        return "\n".join(lineas)
 
     def traducirPy(self):
         params = ", ".join(p.traducirPy() for p in self.parametros)
         lineas = []
         for c in self.cuerpo:
-            if hasattr(c, 'traducirPy') and callable(c.traducirPy):
-                try:
-                    lineas.append(c.traducirPy(indent=1))
-                except TypeError:
-                    lineas.append(c.traducirPy())
-        cuerpo = "\n    ".join(lineas)
-        return f"def {self.nombre[1]}({params}):\n    {cuerpo}"
+            try:    lineas.append(c.traducirPy(indent=1))
+            except TypeError: lineas.append(c.traducirPy())
+        return f"def {self.nombre[1]}({params}):\n    " + "\n    ".join(lineas)
 
     def traducirRuby(self):
         params = ", ".join(p.traducirRuby() for p in self.parametros)
         lineas = []
         for c in self.cuerpo:
-            if hasattr(c, 'traducirRuby') and callable(c.traducirRuby):
-                try:
-                    lineas.append(c.traducirRuby(indent=1))
-                except TypeError:
-                    lineas.append(c.traducirRuby())
-        cuerpo = "\n    ".join(lineas)
-        return f"def {self.nombre[1]}({params})\n    {cuerpo}\nend"
+            try:    lineas.append(c.traducirRuby(indent=1))
+            except TypeError: lineas.append(c.traducirRuby())
+        return f"def {self.nombre[1]}({params})\n    " + "\n    ".join(lineas) + "\nend"
 
 
 # ==========================
@@ -163,36 +304,29 @@ class NodoFuncion(NodoAST):
 # ==========================
 
 class NodoLlamadaFuncion(NodoAST):
-    # Nodo que representa una llamada a funcion generica
     def __init__(self, nombref, argumentos):
         self.nombre_funcion = nombref
-        self.argumentos = argumentos
+        self.argumentos     = argumentos
 
     def traducirPy(self):
-        args = ", ".join(arg.traducirPy() for arg in self.argumentos)
-        if self.nombre_funcion == "print":
-            return f"print({args}, end='')"
-        elif self.nombre_funcion == "println":
-            return f"print({args})"
-        else:
-            return f"{self.nombre_funcion}({args})"
+        args = ", ".join(a.traducirPy() for a in self.argumentos)
+        if self.nombre_funcion == "print":   return f"print({args}, end='')"
+        if self.nombre_funcion == "println": return f"print({args})"
+        return f"{self.nombre_funcion}({args})"
 
     def traducirRuby(self):
-        args = ", ".join(arg.traducirRuby() for arg in self.argumentos)
-        if self.nombre_funcion == "print":
-            return f"print {args}"
-        elif self.nombre_funcion == "println":
-            return f"puts {args}"
-        else:
-            return f"{self.nombre_funcion}({args})"
+        args = ", ".join(a.traducirRuby() for a in self.argumentos)
+        if self.nombre_funcion == "print":   return f"print {args}"
+        if self.nombre_funcion == "println": return f"puts {args}"
+        return f"{self.nombre_funcion}({args})"
 
-    def generarCodigo(self):
-        codigo = []
-        for argumento in reversed(self.argumentos):
-            codigo.append(argumento.generarCodigo())
-            codigo.append('   push   eax')
-        codigo.append(f'   call   {self.nombre_funcion}')
-        return '\n'.join(codigo)
+    def generarCodigo(self, ctx=None):
+        lineas = []
+        for arg in reversed(self.argumentos):
+            lineas.append(arg.generarCodigo(ctx))
+            lineas.append("    push  eax")
+        lineas.append(f"    call  {self.nombre_funcion}")
+        return "\n".join(lineas)
 
 
 # ==========================
@@ -200,7 +334,7 @@ class NodoLlamadaFuncion(NodoAST):
 # ==========================
 
 class NodoPrint(NodoAST):
-    # Nodo que representa print(expr) — sin salto de linea
+    # print(expr) — imprime sin salto de linea
     def __init__(self, expresion):
         self.expresion = expresion
 
@@ -210,11 +344,35 @@ class NodoPrint(NodoAST):
     def traducirRuby(self):
         return f"print {self.expresion.traducirRuby()}"
 
-    def generarCodigo(self):
-        codigo = self.expresion.generarCodigo()
-        codigo += '\n   push   eax'
-        codigo += '\n   call   print'
-        return codigo
+    def generarCodigo(self, ctx=None):
+        """
+        Si la expresion es un NodoString → sys_write directo de la cadena en .data
+        Si la expresion es numerica/variable → llamar __print_int (entero a decimal)
+        """
+        lineas = []
+        if isinstance(self.expresion, NodoString):
+            # Registrar cadena en .data y hacer sys_write
+            lbl = ctx.agregar_string(self.expresion.valor[1]
+                                     if isinstance(self.expresion.valor, tuple)
+                                     else self.expresion.valor)
+            # Calcular longitud real (sin comillas, con newline escapado)
+            contenido = (self.expresion.valor[1]
+                         if isinstance(self.expresion.valor, tuple)
+                         else self.expresion.valor)
+            contenido = contenido[1:-1]  # quitar comillas
+            longitud  = len(contenido.replace("\\n", "\n"))
+            lineas.append(f"    ; print string '{contenido}'")
+            lineas.append(f"    mov  eax, 4         ; sys_write")
+            lineas.append(f"    mov  ebx, 1         ; stdout")
+            lineas.append(f"    mov  ecx, {lbl}")
+            lineas.append(f"    mov  edx, {longitud}")
+            lineas.append(f"    int  0x80")
+        else:
+            # Expresion entera: evaluar en EAX, llamar __print_int
+            lineas.append(self.expresion.generarCodigo(ctx))
+            lineas.append("    ; print entero (sin newline)")
+            lineas.append("    call __print_int")
+        return "\n".join(lineas)
 
 
 # ==========================
@@ -222,7 +380,7 @@ class NodoPrint(NodoAST):
 # ==========================
 
 class NodoPrintln(NodoAST):
-    # Nodo que representa println(expr) — con salto de linea
+    # println(expr) — imprime con salto de linea
     def __init__(self, expresion):
         self.expresion = expresion
 
@@ -232,11 +390,38 @@ class NodoPrintln(NodoAST):
     def traducirRuby(self):
         return f"puts {self.expresion.traducirRuby()}"
 
-    def generarCodigo(self):
-        codigo = self.expresion.generarCodigo()
-        codigo += '\n   push   eax'
-        codigo += '\n   call   println'
-        return codigo
+    def generarCodigo(self, ctx=None):
+        """
+        Si la expresion es un NodoString → sys_write de cadena + sys_write de newline
+        Si la expresion es numerica/variable → llamar __println_int
+        """
+        lineas = []
+        if isinstance(self.expresion, NodoString):
+            lbl = ctx.agregar_string(self.expresion.valor[1]
+                                     if isinstance(self.expresion.valor, tuple)
+                                     else self.expresion.valor)
+            contenido = (self.expresion.valor[1]
+                         if isinstance(self.expresion.valor, tuple)
+                         else self.expresion.valor)
+            contenido = contenido[1:-1]
+            longitud  = len(contenido.replace("\\n", "\n"))
+            lineas.append(f"    ; println string '{contenido}'")
+            lineas.append(f"    mov  eax, 4         ; sys_write")
+            lineas.append(f"    mov  ebx, 1         ; stdout")
+            lineas.append(f"    mov  ecx, {lbl}")
+            lineas.append(f"    mov  edx, {longitud}")
+            lineas.append(f"    int  0x80")
+            lineas.append(f"    ; newline")
+            lineas.append(f"    mov  eax, 4")
+            lineas.append(f"    mov  ebx, 1")
+            lineas.append(f"    mov  ecx, newline")
+            lineas.append(f"    mov  edx, 1")
+            lineas.append(f"    int  0x80")
+        else:
+            lineas.append(self.expresion.generarCodigo(ctx))
+            lineas.append("    ; println entero (con newline)")
+            lineas.append("    call __println_int")
+        return "\n".join(lineas)
 
 
 # ==========================
@@ -244,53 +429,47 @@ class NodoPrintln(NodoAST):
 # ==========================
 
 class NodoIf(NodoAST):
-    # Nodo que representa if (condicion) { cuerpo } [else { cuerpo_else }]
-    # cuerpo_else puede ser None si no hay clausula else
     def __init__(self, condicion, cuerpo_if, cuerpo_else=None):
-        self.condicion = condicion
-        self.cuerpo_if = cuerpo_if
+        self.condicion   = condicion
+        self.cuerpo_if   = cuerpo_if
         self.cuerpo_else = cuerpo_else
+
+    def generarCodigo(self, ctx=None):
+        etq_else = f"else_{id(self)}"
+        etq_fin  = f"fin_if_{id(self)}"
+        lineas   = []
+        lineas.append(self.condicion.generarCodigo(ctx))
+        lineas.append("    cmp  eax, 0")
+        lineas.append(f"    je   {etq_else if self.cuerpo_else else etq_fin}")
+        for inst in self.cuerpo_if:
+            lineas.append(inst.generarCodigo(ctx))
+        if self.cuerpo_else:
+            lineas.append(f"    jmp  {etq_fin}")
+            lineas.append(f"{etq_else}:")
+            for inst in self.cuerpo_else:
+                lineas.append(inst.generarCodigo(ctx))
+        lineas.append(f"{etq_fin}:")
+        return "\n".join(lineas)
 
     def traducirPy(self, indent=0):
         tab = "    " * indent
-        condicion = self.condicion.traducirPy()
-        cuerpo_if = f"\n{tab}    ".join(c.traducirPy() for c in self.cuerpo_if)
-        resultado = f"if {condicion}:\n{tab}    {cuerpo_if}"
+        cond = self.condicion.traducirPy()
+        ci   = f"\n{tab}    ".join(c.traducirPy() for c in self.cuerpo_if)
+        res  = f"if {cond}:\n{tab}    {ci}"
         if self.cuerpo_else:
-            cuerpo_else = f"\n{tab}    ".join(c.traducirPy() for c in self.cuerpo_else)
-            resultado += f"\n{tab}else:\n{tab}    {cuerpo_else}"
-        return resultado
+            ce  = f"\n{tab}    ".join(c.traducirPy() for c in self.cuerpo_else)
+            res += f"\n{tab}else:\n{tab}    {ce}"
+        return res
 
     def traducirRuby(self, indent=0):
         tab = "    " * indent
-        condicion = self.condicion.traducirRuby()
-        cuerpo_if = f"\n{tab}    ".join(c.traducirRuby() for c in self.cuerpo_if)
-        resultado = f"if {condicion}\n{tab}    {cuerpo_if}"
+        cond = self.condicion.traducirRuby()
+        ci   = f"\n{tab}    ".join(c.traducirRuby() for c in self.cuerpo_if)
+        res  = f"if {cond}\n{tab}    {ci}"
         if self.cuerpo_else:
-            cuerpo_else = f"\n{tab}    ".join(c.traducirRuby() for c in self.cuerpo_else)
-            resultado += f"\n{tab}else\n{tab}    {cuerpo_else}"
-        resultado += f"\n{tab}end"
-        return resultado
-
-    def generarCodigo(self):
-        etiqueta_else = f"else_{id(self)}"
-        etiqueta_fin  = f"fin_if_{id(self)}"
-        codigo = []
-        codigo.append(self.condicion.generarCodigo())
-        codigo.append('   cmp   eax, 0')
-        if self.cuerpo_else:
-            codigo.append(f'   je    {etiqueta_else}')
-        else:
-            codigo.append(f'   je    {etiqueta_fin}')
-        for instruccion in self.cuerpo_if:
-            codigo.append(instruccion.generarCodigo())
-        if self.cuerpo_else:
-            codigo.append(f'   jmp   {etiqueta_fin}')
-            codigo.append(f'{etiqueta_else}:')
-            for instruccion in self.cuerpo_else:
-                codigo.append(instruccion.generarCodigo())
-        codigo.append(f'{etiqueta_fin}:')
-        return '\n'.join(codigo)
+            ce  = f"\n{tab}    ".join(c.traducirRuby() for c in self.cuerpo_else)
+            res += f"\n{tab}else\n{tab}    {ce}"
+        return res + f"\n{tab}end"
 
 
 # ==========================
@@ -298,36 +477,35 @@ class NodoIf(NodoAST):
 # ==========================
 
 class NodoWhile(NodoAST):
-    # Nodo que representa while (condicion) { cuerpo }
     def __init__(self, condicion, cuerpo):
         self.condicion = condicion
-        self.cuerpo = cuerpo
+        self.cuerpo    = cuerpo
+
+    def generarCodigo(self, ctx=None):
+        etq_ini = f"ini_while_{id(self)}"
+        etq_fin = f"fin_while_{id(self)}"
+        lineas  = []
+        lineas.append(f"{etq_ini}:")
+        lineas.append(self.condicion.generarCodigo(ctx))
+        lineas.append("    cmp  eax, 0")
+        lineas.append(f"    je   {etq_fin}")
+        for inst in self.cuerpo:
+            lineas.append(inst.generarCodigo(ctx))
+        lineas.append(f"    jmp  {etq_ini}")
+        lineas.append(f"{etq_fin}:")
+        return "\n".join(lineas)
 
     def traducirPy(self, indent=0):
-        tab = "    " * indent
-        condicion = self.condicion.traducirPy()
+        tab  = "    " * indent
+        cond = self.condicion.traducirPy()
         cuerpo = f"\n{tab}    ".join(c.traducirPy() for c in self.cuerpo)
-        return f"while {condicion}:\n{tab}    {cuerpo}"
+        return f"while {cond}:\n{tab}    {cuerpo}"
 
     def traducirRuby(self, indent=0):
-        tab = "    " * indent
-        condicion = self.condicion.traducirRuby()
+        tab  = "    " * indent
+        cond = self.condicion.traducirRuby()
         cuerpo = f"\n{tab}    ".join(c.traducirRuby() for c in self.cuerpo)
-        return f"while {condicion}\n{tab}    {cuerpo}\n{tab}end"
-
-    def generarCodigo(self):
-        etiqueta_inicio = f"inicio_while_{id(self)}"
-        etiqueta_fin    = f"fin_while_{id(self)}"
-        codigo = []
-        codigo.append(f'{etiqueta_inicio}:')
-        codigo.append(self.condicion.generarCodigo())
-        codigo.append('   cmp   eax, 0')
-        codigo.append(f'   je    {etiqueta_fin}')
-        for instruccion in self.cuerpo:
-            codigo.append(instruccion.generarCodigo())
-        codigo.append(f'   jmp   {etiqueta_inicio}')
-        codigo.append(f'{etiqueta_fin}:')
-        return '\n'.join(codigo)
+        return f"while {cond}\n{tab}    {cuerpo}\n{tab}end"
 
 
 # ==========================
@@ -335,44 +513,43 @@ class NodoWhile(NodoAST):
 # ==========================
 
 class NodoFor(NodoAST):
-    # Nodo que representa for (inicio; condicion; incremento) { cuerpo }
     def __init__(self, inicio, condicion, incremento, cuerpo):
-        self.inicio = inicio
-        self.condicion = condicion
+        self.inicio     = inicio
+        self.condicion  = condicion
         self.incremento = incremento
-        self.cuerpo = cuerpo
+        self.cuerpo     = cuerpo
+
+    def generarCodigo(self, ctx=None):
+        etq_ini = f"ini_for_{id(self)}"
+        etq_fin = f"fin_for_{id(self)}"
+        lineas  = []
+        lineas.append(self.inicio.generarCodigo(ctx))
+        lineas.append(f"{etq_ini}:")
+        lineas.append(self.condicion.generarCodigo(ctx))
+        lineas.append("    cmp  eax, 0")
+        lineas.append(f"    je   {etq_fin}")
+        for inst in self.cuerpo:
+            lineas.append(inst.generarCodigo(ctx))
+        lineas.append(self.incremento.generarCodigo(ctx))
+        lineas.append(f"    jmp  {etq_ini}")
+        lineas.append(f"{etq_fin}:")
+        return "\n".join(lineas)
 
     def traducirPy(self, indent=0):
-        tab = "    " * indent
-        inicio     = self.inicio.traducirPy()
-        condicion  = self.condicion.traducirPy()
-        incremento = self.incremento.traducirPy()
-        cuerpo     = f"\n{tab}    ".join(c.traducirPy() for c in self.cuerpo)
-        return f"{inicio}\n{tab}while {condicion}:\n{tab}    {cuerpo}\n{tab}    {incremento}"
+        tab  = "    " * indent
+        ini  = self.inicio.traducirPy()
+        cond = self.condicion.traducirPy()
+        inc  = self.incremento.traducirPy()
+        cuerpo = f"\n{tab}    ".join(c.traducirPy() for c in self.cuerpo)
+        return f"{ini}\n{tab}while {cond}:\n{tab}    {cuerpo}\n{tab}    {inc}"
 
     def traducirRuby(self, indent=0):
-        tab = "    " * indent
-        inicio     = self.inicio.traducirRuby()
-        condicion  = self.condicion.traducirRuby()
-        incremento = self.incremento.traducirRuby()
-        cuerpo     = f"\n{tab}    ".join(c.traducirRuby() for c in self.cuerpo)
-        return f"{inicio}\n{tab}while {condicion}\n{tab}    {cuerpo}\n{tab}    {incremento}\n{tab}end"
-
-    def generarCodigo(self):
-        etiqueta_inicio = f"inicio_for_{id(self)}"
-        etiqueta_fin    = f"fin_for_{id(self)}"
-        codigo = []
-        codigo.append(self.inicio.generarCodigo())
-        codigo.append(f'{etiqueta_inicio}:')
-        codigo.append(self.condicion.generarCodigo())
-        codigo.append('   cmp   eax, 0')
-        codigo.append(f'   je    {etiqueta_fin}')
-        for instruccion in self.cuerpo:
-            codigo.append(instruccion.generarCodigo())
-        codigo.append(self.incremento.generarCodigo())
-        codigo.append(f'   jmp   {etiqueta_inicio}')
-        codigo.append(f'{etiqueta_fin}:')
-        return '\n'.join(codigo)
+        tab  = "    " * indent
+        ini  = self.inicio.traducirRuby()
+        cond = self.condicion.traducirRuby()
+        inc  = self.incremento.traducirRuby()
+        cuerpo = f"\n{tab}    ".join(c.traducirRuby() for c in self.cuerpo)
+        return f"{ini}\n{tab}while {cond}\n{tab}    {cuerpo}\n{tab}    {inc}\n{tab}end"
 
 
 # ==========================
@@ -380,91 +557,74 @@ class NodoFor(NodoAST):
 # ==========================
 
 class NodoParametro(NodoAST):
-    # Nodo que representa a un parametro de funcion
     def __init__(self, tipo, nombre):
-        self.tipo = tipo
+        self.tipo   = tipo
         self.nombre = nombre
 
-    def traducirPy(self):
-        return self.nombre[1]
-
-    def traducirRuby(self):
-        return self.nombre[1]
+    def traducirPy(self):  return self.nombre[1]
+    def traducirRuby(self): return self.nombre[1]
 
 
 class NodoAsignacion(NodoAST):
-    # Nodo que representa una declaracion + asignacion: int x = expr
+    # int x = expr
     def __init__(self, tipo, nombre, expresion):
-        self.tipo = tipo
-        self.nombre = nombre
+        self.tipo     = tipo
+        self.nombre   = nombre
         self.expresion = expresion
 
-    def generarCodigo(self):
-        codigo = self.expresion.generarCodigo()
-        codigo += f'\n   mov [{self.nombre[1]}], eax'
-        return codigo
+    def generarCodigo(self, ctx=None):
+        lineas = [self.expresion.generarCodigo(ctx)]
+        lineas.append(f"    mov  [{self.nombre[1]}], eax")
+        return "\n".join(lineas)
 
-    def traducirPy(self):
-        return f"{self.nombre[1]} = {self.expresion.traducirPy()}"
-
-    def traducirRuby(self):
-        return f"{self.nombre[1]} = {self.expresion.traducirRuby()}"
+    def traducirPy(self):   return f"{self.nombre[1]} = {self.expresion.traducirPy()}"
+    def traducirRuby(self): return f"{self.nombre[1]} = {self.expresion.traducirRuby()}"
 
 
 class NodoReasignacion(NodoAST):
-    # Nodo que representa una reasignacion: x = expr (sin tipo)
+    # x = expr  (sin tipo)
     def __init__(self, nombre, expresion):
-        self.nombre = nombre
+        self.nombre    = nombre
         self.expresion = expresion
 
-    def generarCodigo(self):
-        codigo = self.expresion.generarCodigo()
-        codigo += f'\n   mov [{self.nombre[1]}], eax'
-        return codigo
+    def generarCodigo(self, ctx=None):
+        lineas = [self.expresion.generarCodigo(ctx)]
+        lineas.append(f"    mov  [{self.nombre[1]}], eax")
+        return "\n".join(lineas)
 
-    def traducirPy(self):
-        return f"{self.nombre[1]} = {self.expresion.traducirPy()}"
-
-    def traducirRuby(self):
-        return f"{self.nombre[1]} = {self.expresion.traducirRuby()}"
+    def traducirPy(self):   return f"{self.nombre[1]} = {self.expresion.traducirPy()}"
+    def traducirRuby(self): return f"{self.nombre[1]} = {self.expresion.traducirRuby()}"
 
 
 class NodoOperacion(NodoAST):
-    # Nodo que representa una operacion aritmetica o de comparacion
     def __init__(self, izquierda, operador, derecha):
         self.izquierda = izquierda
-        self.operador = operador
-        self.derecha = derecha
+        self.operador  = operador
+        self.derecha   = derecha
 
-    def generarCodigo(self):
-        codigo = []
-        codigo.append(self.izquierda.generarCodigo())
-        codigo.append('   push    eax')
-        codigo.append(self.derecha.generarCodigo())
-        codigo.append('   mov   ebx, eax')
-        codigo.append('   pop    eax')
+    def generarCodigo(self, ctx=None):
+        lineas = []
+        lineas.append(self.izquierda.generarCodigo(ctx))
+        lineas.append("    push  eax")
+        lineas.append(self.derecha.generarCodigo(ctx))
+        lineas.append("    mov   ebx, eax")
+        lineas.append("    pop   eax")
         op = self.operador[1]
-        if op == '+':
-            codigo.append('   add   eax, ebx')
-        elif op == '-':
-            codigo.append('   sub   eax, ebx')
-        elif op == '*':
-            codigo.append('   imul  eax, ebx')
+        if   op == '+': lineas.append("    add   eax, ebx")
+        elif op == '-': lineas.append("    sub   eax, ebx")
+        elif op == '*': lineas.append("    imul  eax, ebx")
         elif op in ('<', '>', '<=', '>=', '==', '!='):
-            instruccion_salto = {
-                '<': 'jl', '>': 'jg', '<=': 'jle',
-                '>=': 'jge', '==': 'je', '!=': 'jne'
-            }[op]
-            etiqueta_true = f"cmp_true_{id(self)}"
-            etiqueta_end  = f"cmp_end_{id(self)}"
-            codigo.append('   cmp   eax, ebx')
-            codigo.append('   mov   eax, 0')
-            codigo.append(f'   {instruccion_salto}  {etiqueta_true}')
-            codigo.append(f'   jmp   {etiqueta_end}')
-            codigo.append(f'{etiqueta_true}:')
-            codigo.append('   mov   eax, 1')
-            codigo.append(f'{etiqueta_end}:')
-        return '\n'.join(codigo)
+            salto = {'<':'jl', '>':'jg', '<=':'jle', '>=':'jge', '==':'je', '!=':'jne'}[op]
+            etq_t = f"cmp_t_{id(self)}"
+            etq_e = f"cmp_e_{id(self)}"
+            lineas.append("    cmp   eax, ebx")
+            lineas.append("    mov   eax, 0")
+            lineas.append(f"    {salto}   {etq_t}")
+            lineas.append(f"    jmp   {etq_e}")
+            lineas.append(f"{etq_t}:")
+            lineas.append("    mov   eax, 1")
+            lineas.append(f"{etq_e}:")
+        return "\n".join(lineas)
 
     def traducirPy(self):
         return f"{self.izquierda.traducirPy()} {self.operador[1]} {self.derecha.traducirPy()}"
@@ -474,64 +634,53 @@ class NodoOperacion(NodoAST):
 
 
 class NodoRetorno(NodoAST):
-    # Nodo que representa un retorno de funcion
     def __init__(self, expresion):
         self.expresion = expresion
 
-    def generarCodigo(self):
-        return self.expresion.generarCodigo()
+    def generarCodigo(self, ctx=None):
+        return self.expresion.generarCodigo(ctx)
 
-    def traducirPy(self):
-        return f"return {self.expresion.traducirPy()}"
-
-    def traducirRuby(self):
-        return f"return {self.expresion.traducirRuby()}"
+    def traducirPy(self):   return f"return {self.expresion.traducirPy()}"
+    def traducirRuby(self): return f"return {self.expresion.traducirRuby()}"
 
 
 class NodoIdentificador(NodoAST):
-    # Nodo que representa un identificador
     def __init__(self, nombre):
         self.nombre = nombre
 
-    def generarCodigo(self):
-        return f'\n   mov eax, [{self.nombre[1]}]'
+    def generarCodigo(self, ctx=None):
+        return f"    mov  eax, [{self.nombre[1]}]"
 
-    def traducirPy(self):
-        return self.nombre[1]
-
-    def traducirRuby(self):
-        return self.nombre[1]
+    def traducirPy(self):   return self.nombre[1]
+    def traducirRuby(self): return self.nombre[1]
 
 
 class NodoNumero(NodoAST):
-    # Nodo que representa un numero
     def __init__(self, valor):
         self.valor = valor
 
-    def generarCodigo(self):
-        return f'\n   mov eax, {self.valor[1]}'
+    def generarCodigo(self, ctx=None):
+        v = self.valor[1] if isinstance(self.valor, tuple) else str(self.valor)
+        return f"    mov  eax, {v}"
 
     def traducirPy(self):
-        if isinstance(self.valor, tuple):
-            return str(self.valor[1])
-        return str(self.valor)
+        return str(self.valor[1]) if isinstance(self.valor, tuple) else str(self.valor)
 
     def traducirRuby(self):
-        if isinstance(self.valor, tuple):
-            return str(self.valor[1])
-        return str(self.valor)
+        return str(self.valor[1]) if isinstance(self.valor, tuple) else str(self.valor)
 
 
 class NodoString(NodoAST):
-    # Nodo que representa una cadena de texto
     def __init__(self, valor):
-        self.valor = valor
+        self.valor = valor   # token (STRING, '"texto"')
 
-    def generarCodigo(self):
-        return f'; cadena: {self.valor[1]}'
+    def generarCodigo(self, ctx=None):
+        # Las cadenas solas no generan código inline; se manejan en NodoPrint/NodoPrintln
+        lbl = ctx.agregar_string(self.valor[1] if isinstance(self.valor, tuple) else self.valor)
+        return f"    ; referencia string {lbl}"
 
     def traducirPy(self):
-        return self.valor[1]
+        return self.valor[1] if isinstance(self.valor, tuple) else self.valor
 
     def traducirRuby(self):
-        return self.valor[1]
+        return self.valor[1] if isinstance(self.valor, tuple) else self.valor

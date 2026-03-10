@@ -1,6 +1,6 @@
 import lexico
 
-# Analizador sintactico 
+# Analizador sintactico
 class Parser:
     def __init__(self, tokens):
         self.tokens = tokens
@@ -22,17 +22,14 @@ class Parser:
     # ----------------------------------------
 
     def parsear(self):
-        # Parsea múltiples funciones y retorna un NodoPrograma
         funciones = []
         main = None
-
         while self.obtener_token_actual() is not None:
             nodo_funcion = self.funcion()
             if nodo_funcion.nombre[1] == 'main':
                 main = nodo_funcion
             else:
                 funciones.append(nodo_funcion)
-
         return lexico.NodoPrograma(funciones, main)
 
     # ----------------------------------------
@@ -41,9 +38,9 @@ class Parser:
 
     def funcion(self):
         # Gramatica: tipo IDENTIFIER ( [parametros] ) { cuerpo }
-        tipo_retorno    = self.coincidir('KEYWORD')         # Tipo de retorno (ej. int)
-        nombre_funcion  = self.coincidir('IDENTIFIER')      # Nombre de la funcion
-        self.coincidir('DELIMITER')                         # Se espera (
+        tipo_retorno   = self.coincidir('KEYWORD')          # tipo de retorno
+        nombre_funcion = self.coincidir('IDENTIFIER')       # nombre
+        self.coincidir('DELIMITER')                         # (
 
         if nombre_funcion[1] == 'main':
             parametros = []
@@ -53,12 +50,12 @@ class Parser:
             else:
                 parametros = self.parametros()
 
-        self.coincidir('DELIMITER')                         # Se espera )
-        self.coincidir('DELIMITER')                         # Se espera {
-        cuerpo = self.cuerpo()                              # Cuerpo de la funcion
-        self.coincidir('DELIMITER')                         # Se espera }
+        self.coincidir('DELIMITER')                         # )
+        self.coincidir('DELIMITER')                         # {
+        cuerpo = self.cuerpo()
+        self.coincidir('DELIMITER')                         # }
 
-        # Consumir el ; opcional despues del } (ej. };)
+        # Consumir ; opcional despues de } (ej. };)
         if self.obtener_token_actual() and self.obtener_token_actual()[1] == ';':
             self.coincidir('DELIMITER')
 
@@ -69,20 +66,16 @@ class Parser:
     # ----------------------------------------
 
     def parametros(self):
-        lista_parametros = []
-
-        # Regla: tipo IDENTIFIER (, tipo IDENTIFIER)*
+        lista = []
         tipo   = self.coincidir('KEYWORD')
         nombre = self.coincidir('IDENTIFIER')
-        lista_parametros.append(lexico.NodoParametro(tipo, nombre))
-
+        lista.append(lexico.NodoParametro(tipo, nombre))
         while self.obtener_token_actual() and self.obtener_token_actual()[1] == ',':
             self.coincidir('DELIMITER')
             tipo   = self.coincidir('KEYWORD')
             nombre = self.coincidir('IDENTIFIER')
-            lista_parametros.append(lexico.NodoParametro(tipo, nombre))
-
-        return lista_parametros
+            lista.append(lexico.NodoParametro(tipo, nombre))
+        return lista
 
     # ----------------------------------------
     # CUERPO
@@ -90,7 +83,6 @@ class Parser:
 
     def cuerpo(self):
         instrucciones = []
-
         while self.obtener_token_actual() and self.obtener_token_actual()[1] != '}':
             token = self.obtener_token_actual()
 
@@ -99,7 +91,6 @@ class Parser:
 
             elif token[1] == 'if':
                 instrucciones.append(self.instruccion_if())
-                # Consumir ; opcional despues del bloque (ej. };)
                 if self.obtener_token_actual() and self.obtener_token_actual()[1] == ';':
                     self.coincidir('DELIMITER')
 
@@ -120,11 +111,9 @@ class Parser:
                 instrucciones.append(self.instruccion_println())
 
             elif token[0] == 'KEYWORD':
-                # Cualquier otro keyword es una declaracion+asignacion: tipo IDENTIFIER = expr;
                 instrucciones.append(self.asignacion())
 
             elif token[0] == 'IDENTIFIER':
-                # Puede ser reasignacion (x = ...) o llamada a funcion (f(...))
                 instrucciones.append(self.instruccion_identificador())
 
             else:
@@ -133,162 +122,152 @@ class Parser:
         return instrucciones
 
     # ----------------------------------------
-    # INSTRUCCIONES ESPECÍFICAS
+    # INSTRUCCIONES
     # ----------------------------------------
 
     def asignacion(self):
-        # Gramatica: tipo IDENTIFIER = expresion ;
-        tipo    = self.coincidir('KEYWORD')
-        nombre  = self.coincidir('IDENTIFIER')
-        self.coincidir('OPERATOR')                          # Se espera =
+        # tipo IDENTIFIER = expresion ;
+        tipo      = self.coincidir('KEYWORD')
+        nombre    = self.coincidir('IDENTIFIER')
+        self.coincidir('OPERATOR')                          # =
         expresion = self.expresion()
-        self.coincidir('DELIMITER')                         # Se espera ;
+        self.coincidir('DELIMITER')                         # ;
         return lexico.NodoAsignacion(tipo, nombre, expresion)
 
     def instruccion_identificador(self):
-        # Decide si es reasignacion (x = ...) o llamada a funcion (f(...))
+        # Reasignacion (x = ...) o llamada a funcion (f(...))
         identificador = self.coincidir('IDENTIFIER')
         token_sig = self.obtener_token_actual()
 
         if token_sig and token_sig[1] == '(':
-            # Llamada como instruccion: f(args);
-            self.coincidir('DELIMITER')                     # Se espera (
+            self.coincidir('DELIMITER')                     # (
             argumentos = self.llamadaFuncion()
-            self.coincidir('DELIMITER')                     # Se espera )
-            self.coincidir('DELIMITER')                     # Se espera ;
+            self.coincidir('DELIMITER')                     # )
+            self.coincidir('DELIMITER')                     # ;
             return lexico.NodoLlamadaFuncion(identificador[1], argumentos)
 
         elif token_sig and token_sig[0] == 'OPERATOR' and token_sig[1] == '=':
-            # Reasignacion: x = expresion;
-            self.coincidir('OPERATOR')                      # Se espera =
+            self.coincidir('OPERATOR')                      # =
             expresion = self.expresion()
-            self.coincidir('DELIMITER')                     # Se espera ;
+            self.coincidir('DELIMITER')                     # ;
             return lexico.NodoReasignacion(identificador, expresion)
 
         else:
             raise SyntaxError(f"Se esperaba '(' o '=' despues de identificador, pero se encontro: {token_sig}")
 
     def retorno(self):
-        self.coincidir('KEYWORD')                           # Se espera return
+        self.coincidir('KEYWORD')                           # return
         expresion = self.expresion()
-        self.coincidir('DELIMITER')                         # Se espera ;
+        self.coincidir('DELIMITER')                         # ;
         return lexico.NodoRetorno(expresion)
 
     # ----------------------------------------
-    # INSTRUCCION PRINT
+    # PRINT / PRINTLN
     # ----------------------------------------
 
     def instruccion_print(self):
-        # Gramatica: print ( expresion ) ;
-        self.coincidir('KEYWORD')                           # Se espera print
-        self.coincidir('DELIMITER')                         # Se espera (
+        # print ( expresion ) ;
+        self.coincidir('KEYWORD')                           # print
+        self.coincidir('DELIMITER')                         # (
         expresion = self.expresion()
-        self.coincidir('DELIMITER')                         # Se espera )
-        self.coincidir('DELIMITER')                         # Se espera ;
+        self.coincidir('DELIMITER')                         # )
+        self.coincidir('DELIMITER')                         # ;
         return lexico.NodoPrint(expresion)
 
-    # ----------------------------------------
-    # INSTRUCCION PRINTLN
-    # ----------------------------------------
-
     def instruccion_println(self):
-        # Gramatica: println ( expresion ) ;
-        self.coincidir('KEYWORD')                           # Se espera println
-        self.coincidir('DELIMITER')                         # Se espera (
+        # println ( expresion ) ;
+        self.coincidir('KEYWORD')                           # println
+        self.coincidir('DELIMITER')                         # (
         expresion = self.expresion()
-        self.coincidir('DELIMITER')                         # Se espera )
-        self.coincidir('DELIMITER')                         # Se espera ;
+        self.coincidir('DELIMITER')                         # )
+        self.coincidir('DELIMITER')                         # ;
         return lexico.NodoPrintln(expresion)
 
     # ----------------------------------------
-    # INSTRUCCION IF / ELSE
+    # IF / ELSE
     # ----------------------------------------
 
     def instruccion_if(self):
-        # Gramatica: if ( condicion ) { cuerpo } [else { cuerpo }]
-        self.coincidir('KEYWORD')                           # Se espera if
-        self.coincidir('DELIMITER')                         # Se espera (
+        # if ( condicion ) { cuerpo } [else { cuerpo }]
+        self.coincidir('KEYWORD')                           # if
+        self.coincidir('DELIMITER')                         # (
         condicion = self.expresion()
-        self.coincidir('DELIMITER')                         # Se espera )
-        self.coincidir('DELIMITER')                         # Se espera {
+        self.coincidir('DELIMITER')                         # )
+        self.coincidir('DELIMITER')                         # {
         cuerpo_if = self.cuerpo()
-        self.coincidir('DELIMITER')                         # Se espera }
+        self.coincidir('DELIMITER')                         # }
 
-        # Verificar si hay clausula else
         cuerpo_else = None
         if self.obtener_token_actual() and self.obtener_token_actual()[1] == 'else':
-            self.coincidir('KEYWORD')                       # Se espera else
-            self.coincidir('DELIMITER')                     # Se espera {
+            self.coincidir('KEYWORD')                       # else
+            self.coincidir('DELIMITER')                     # {
             cuerpo_else = self.cuerpo()
-            self.coincidir('DELIMITER')                     # Se espera }
+            self.coincidir('DELIMITER')                     # }
 
         return lexico.NodoIf(condicion, cuerpo_if, cuerpo_else)
 
     # ----------------------------------------
-    # INSTRUCCION WHILE
+    # WHILE
     # ----------------------------------------
 
     def instruccion_while(self):
-        # Gramatica: while ( condicion ) { cuerpo }
-        self.coincidir('KEYWORD')                           # Se espera while
-        self.coincidir('DELIMITER')                         # Se espera (
+        # while ( condicion ) { cuerpo }
+        self.coincidir('KEYWORD')                           # while
+        self.coincidir('DELIMITER')                         # (
         condicion = self.expresion()
-        self.coincidir('DELIMITER')                         # Se espera )
-        self.coincidir('DELIMITER')                         # Se espera {
+        self.coincidir('DELIMITER')                         # )
+        self.coincidir('DELIMITER')                         # {
         cuerpo = self.cuerpo()
-        self.coincidir('DELIMITER')                         # Se espera }
+        self.coincidir('DELIMITER')                         # }
         return lexico.NodoWhile(condicion, cuerpo)
 
     # ----------------------------------------
-    # INSTRUCCION FOR
+    # FOR
     # ----------------------------------------
 
     def instruccion_for(self):
-        # Gramatica: for ( inicio ; condicion ; incremento ) { cuerpo }
-        self.coincidir('KEYWORD')                           # Se espera for
-        self.coincidir('DELIMITER')                         # Se espera (
+        # for ( inicio ; condicion ; incremento ) { cuerpo }
+        self.coincidir('KEYWORD')                           # for
+        self.coincidir('DELIMITER')                         # (
 
-        # inicio: puede ser declaracion (int i = 0) o reasignacion (i = 0)
         token = self.obtener_token_actual()
         if token[0] == 'KEYWORD':
-            inicio = self.asignacion()                      # tipo IDENTIFIER = expr ;
+            inicio = self.asignacion()                      # tipo id = expr ;
         elif token[0] == 'IDENTIFIER':
             identificador = self.coincidir('IDENTIFIER')
-            self.coincidir('OPERATOR')                      # Se espera =
+            self.coincidir('OPERATOR')                      # =
             expresion = self.expresion()
-            self.coincidir('DELIMITER')                     # Se espera ;
+            self.coincidir('DELIMITER')                     # ;
             inicio = lexico.NodoReasignacion(identificador, expresion)
         else:
             raise SyntaxError(f"Se esperaba inicio de for, pero se encontro: {token}")
 
         condicion = self.expresion()
-        self.coincidir('DELIMITER')                         # Se espera ;
+        self.coincidir('DELIMITER')                         # ;
 
-        # incremento: reasignacion sin ; final (ej: i = i + 1)
         identificador = self.coincidir('IDENTIFIER')
-        self.coincidir('OPERATOR')                          # Se espera =
+        self.coincidir('OPERATOR')                          # =
         expresion_inc = self.expresion()
         incremento = lexico.NodoReasignacion(identificador, expresion_inc)
 
-        self.coincidir('DELIMITER')                         # Se espera )
-        self.coincidir('DELIMITER')                         # Se espera {
+        self.coincidir('DELIMITER')                         # )
+        self.coincidir('DELIMITER')                         # {
         cuerpo = self.cuerpo()
-        self.coincidir('DELIMITER')                         # Se espera }
+        self.coincidir('DELIMITER')                         # }
 
         return lexico.NodoFor(inicio, condicion, incremento, cuerpo)
 
     # ----------------------------------------
-    # EXPRESIONES Y TERMINOS
+    # EXPRESIONES Y TÉRMINOS
     # ----------------------------------------
 
     def expresion(self):
         izquierda = self.termino()
         while self.obtener_token_actual() and self.obtener_token_actual()[0] == 'OPERATOR':
-            # Detenerse si el operador es = (es asignacion, no expresion)
             if self.obtener_token_actual()[1] == '=':
                 break
-            operador = self.coincidir('OPERATOR')
-            derecha = self.termino()
+            operador  = self.coincidir('OPERATOR')
+            derecha   = self.termino()
             izquierda = lexico.NodoOperacion(izquierda, operador, derecha)
         return izquierda
 
@@ -303,17 +282,14 @@ class Parser:
 
         elif token[0] == 'IDENTIFIER':
             identificador = self.coincidir('IDENTIFIER')
-            # Verificar si es llamada a funcion dentro de expresion
             if self.obtener_token_actual() and self.obtener_token_actual()[1] == '(':
-                self.coincidir('DELIMITER')                 # Se espera (
+                self.coincidir('DELIMITER')                 # (
                 argumentos = self.llamadaFuncion()
-                self.coincidir('DELIMITER')                 # Se espera )
+                self.coincidir('DELIMITER')                 # )
                 return lexico.NodoLlamadaFuncion(identificador[1], argumentos)
-            else:
-                return lexico.NodoIdentificador(identificador)
+            return lexico.NodoIdentificador(identificador)
 
         elif token[0] == 'KEYWORD' and token[1] in ('print', 'println'):
-            # print/println usados como expresion (valor de retorno)
             if token[1] == 'print':
                 self.coincidir('KEYWORD')
                 self.coincidir('DELIMITER')
@@ -332,26 +308,21 @@ class Parser:
 
     def llamadaFuncion(self):
         argumentos = []
-
-        # Si no hay argumentos
         if self.obtener_token_actual() and self.obtener_token_actual()[1] == ')':
             return argumentos
-
-        # Regla: expr (, expr)*
         sigue = True
         while sigue:
             sigue = False
             argumentos.append(self.expresion())
             if self.obtener_token_actual() and self.obtener_token_actual()[1] == ',':
-                self.coincidir('DELIMITER')                 # Se espera ,
+                self.coincidir('DELIMITER')
                 sigue = True
-
         return argumentos
 
     def llamadaComoInstruccion(self):
         identificador = self.coincidir('IDENTIFIER')
-        self.coincidir('DELIMITER')                         # Se espera (
+        self.coincidir('DELIMITER')                         # (
         argumentos = self.llamadaFuncion()
-        self.coincidir('DELIMITER')                         # Se espera )
-        self.coincidir('DELIMITER')                         # Se espera ;
+        self.coincidir('DELIMITER')                         # )
+        self.coincidir('DELIMITER')                         # ;
         return lexico.NodoLlamadaFuncion(identificador[1], argumentos)
