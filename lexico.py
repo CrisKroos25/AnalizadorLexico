@@ -107,6 +107,17 @@ class NodoLlamadaFuncion(NodoAST):
             return f"puts {args}"
         else:
             return f"{self.nombre_funcion}({args})"
+    
+    def generarCodigo (self):
+      # Apilamos argumentos en orden inverso
+      codigo = []
+      for arg in reversed (self. argumentos):
+        codigo.append(arg.generar_codigo())
+        codigo.append(" push eax ; Pasar argumento a la pila")
+      codigo. append (f"    call {self. nombre} ; Llamar a la función {self. nombre}")
+      codigo. append (f"    add esp, {len(self. argumentos) * 4} ; Limpiar pila de argumentos")
+      return "\n". join (codigo)
+
 
 
 class NodoFuncion(NodoAST):
@@ -192,7 +203,48 @@ class NodoOperacion(NodoAST):
     return f"{self.izquierda.traducirPy()} {self.operador[1]} {self.derecha.traducirPy()}"  
   
   def traducirRuby(self):
-    return f"{self.izquierda.traducirRuby()} {self.operador[1]} {self.derecha.traducirRuby()}"  
+    return f"{self.izquierda.traducirRuby()} {self.operador[1]} {self.derecha.traducirRuby()}" 
+
+  def optimizar(self):
+    if isinstance(self.izquierda, NodoOperacion):
+      self.izquierda.optimizar()
+    
+    else:
+        izquierda = self.izquierda
+    
+    if isinstance(self.derecha, NodoOperacion):
+      self.derecha.optimizar()
+    else:
+      derecha = self.derecha
+    
+    # Si ambos nodos son numeros realizamos la operacion de manera directa
+    if isinstance(izquierda, NodoNumero) and isinstance(derecha, NodoNumero):
+      izq = int(izquierda.valor[1])
+      der = int(derecha.valor[1])
+
+      if self.operador[1] == '+':
+        valor = izq + der
+      elif self.operador[1] == '-':
+        valor = izq - der
+      elif self.operador[1] == '*':
+        valor = izq * der
+      elif self.operador[1] == '/':
+        valor = izq / der  # Verificar divisiones por 0
+      return NodoNumero(('NUMBER', str(valor)))
+
+    # Simplificacion algebraica
+    if self.operador == '*' and isinstance(derecha, NodoNumero) and derecha.valor == 1:
+      return izquierda
+    if self.operador == '*' and isinstance(izquierda, NodoNumero) and izquierda.valor == 1:
+      return derecha
+    if self.operador == '+' and isinstance(derecha, NodoNumero) and derecha.valor == 0:
+      return izquierda
+    if self.operador == '+' and isinstance(izquierda, NodoNumero) and izquierda.valor == 0:
+      return derecha
+    
+    # Si no se puede optimizar mas, se devuelve la expresion
+    return NodoOperacion(izquierda, self.operador, derecha)
+
 
 class NodoRetorno(NodoAST):
   # Nodo que representa un retorno de funcion

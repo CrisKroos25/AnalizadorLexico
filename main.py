@@ -1,7 +1,7 @@
 import json
 import lexico
 import sintactico_ast
-
+import subprocess
 
 codigo_fuente = """
 int suma(int a, int b) {
@@ -116,3 +116,16 @@ print(json.dumps(imprimir_ast(nodoExp), indent=1))
 
 print(arbol_ast.traducirPy())
 print(arbol_ast.traducirRuby())
+
+
+
+def compilar(programa):
+    #Generar el codigo en ensamblador
+    codigo_asm = programa.generar_codigo()
+    print(codigo_asm)
+    text_file = open("ejasmcompiladores.asm", "w")
+    text_file.write(codigo_asm)
+    text_file.close()
+
+    subprocess.run(["nasm", "-f", "elf", "ejasmcompiladores.asm"])
+    subprocess.run(["ld" "-m" "elf_i386" "ejasmcompiladores.o" "-o" "ejasmcompiladores"])
