@@ -3,6 +3,7 @@ import os
 import subprocess
 import lexico
 import sintactico_ast
+import semantico
 
 
 codigo_fuente = """
@@ -38,6 +39,7 @@ int main() {
     };
 
     println("Fin del programa");
+    printf("Hola %d\\n", 42);
     return 0;
 };
 """
@@ -66,6 +68,21 @@ try:
 except SyntaxError as e:
     print(f"Error: {e}")
     arbol_ast = None
+
+
+# ==========================
+# ANÁLISIS SEMÁNTICO
+# ==========================
+
+if arbol_ast:
+    try:
+        print("\n=== ANÁLISIS SEMÁNTICO ===")
+        analizador_sem = semantico.AnalizadorSemantico()
+        analizador_sem.analizar(arbol_ast)
+        print("Análisis semántico completado sin errores.")
+    except Exception as e:
+        print(f"Error semántico: {e}")
+        arbol_ast = None
 
 
 # ==========================
@@ -156,13 +173,13 @@ def compilar(codigo_asm, nombre_base="programa"):
         return False
     print(f"         Ensamblado exitoso -> '{archivo_obj}'")
 
-    # --- Paso 3: Enlazar con ld ---
-    print(f"\n[Paso 3] Enlazando con ld...")
-    cmd_ld = ["ld", "-m", "elf_i386", archivo_obj, "-o", archivo_bin]
+    # --- Paso 3: Enlazar con gcc (para funciones externas como printf) ---
+    print(f"\n[Paso 3] Enlazando con gcc...")
+    cmd_ld = ["gcc", "-m32", archivo_obj, "-o", archivo_bin]
     print(f"         Comando: {' '.join(cmd_ld)}")
     resultado_ld = subprocess.run(cmd_ld, capture_output=True, text=True)
     if resultado_ld.returncode != 0:
-        print(f"         ERROR en ld:\n{resultado_ld.stderr}")
+        print(f"         ERROR en gcc:\n{resultado_ld.stderr}")
         return False
     print(f"         Enlazado exitoso  -> '{archivo_bin}'")
 

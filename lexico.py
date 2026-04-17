@@ -55,6 +55,7 @@ class ContextoCodigo:
     def __init__(self):
         self.strings   = {}   # label -> valor_string  (para .data)
         self.variables = []   # [(tipo, nombre)]        (para .bss)
+        self.externs   = set() # nombres de funciones externas
         self._str_cnt  = 0
 
     def agregar_string(self, valor):
@@ -71,6 +72,9 @@ class ContextoCodigo:
     def agregar_variable(self, tipo, nombre):
         if (tipo, nombre) not in self.variables:
             self.variables.append((tipo, nombre))
+
+    def agregar_extern(self, nombre):
+        self.externs.add(nombre)
 
     def seccion_data(self):
         """Genera la sección .data con todas las cadenas y el caracter newline."""
@@ -234,6 +238,8 @@ class NodoPrograma(NodoAST):
         texto.append("")
         texto.append("section .text")
         texto.append("global _start")
+        for ext in sorted(ctx.externs):
+            texto.append(f"extern {ext}")
         texto.append("")
         texto.append(RUTINAS_AUX)
         texto.append("")
@@ -321,12 +327,23 @@ class NodoLlamadaFuncion(NodoAST):
         return f"{self.nombre_funcion}({args})"
 
     def generarCodigo(self, ctx=None):
-        lineas = []
-        for arg in reversed(self.argumentos):
-            lineas.append(arg.generarCodigo(ctx))
-            lineas.append("    push  eax")
-        lineas.append(f"    call  {self.nombre_funcion}")
-        return "\n".join(lineas)
+        if self.nombre_funcion == 'printf':
+            ctx.agregar_extern('printf')
+            lineas = []
+            for arg in reversed(self.argumentos):
+                lineas.append(arg.generarCodigo(ctx))
+                lineas.append("    push  eax")
+            lineas.append(f"    call  {self.nombre_funcion}")
+            lineas.append(f"    add   esp, {4 * len(self.argumentos)}")
+            return "\n".join(lineas)
+        else:
+            # Funciones internas
+            lineas = []
+            for arg in reversed(self.argumentos):
+                lineas.append(arg.generarCodigo(ctx))
+                lineas.append("    push  eax")
+            lineas.append(f"    call  {self.nombre_funcion}")
+            return "\n".join(lineas)
 
 
 # ==========================
